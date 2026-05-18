@@ -1,7 +1,6 @@
 package com.latinbot.sugo;
 
 import android.accessibilityservice.AccessibilityService;
-import android.accessibilityservice.AccessibilityServiceInfo;
 import android.view.accessibility.AccessibilityEvent;
 import android.view.accessibility.AccessibilityNodeInfo;
 import android.os.Bundle;
@@ -10,6 +9,9 @@ import android.os.Looper;
 import android.widget.Toast;
 import android.app.Notification;
 import android.app.PendingIntent;
+import android.content.ClipData;
+import android.content.ClipboardManager;
+import android.content.Context;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
@@ -22,10 +24,8 @@ import java.net.URL;
 public class SugoBotService extends AccessibilityService {
 
     private final String RENDER_URL = "https://gaby-bot-server.onrender.com/bot";
-
-    // Filtro estricto de palabras prohibidas para ignorar notificaciones basura
     private final List<String> PALABRAS_BLOQUEADAS = Arrays.asList(
-        "sistema", "ganaste", "reaccionó", "eliminó", "soporte", "diamantes", "recarga", "emparejado", "oficial"
+        "sistema", "ganaste", "soporte", "diamantes", "recarga", "oficial"
     );
 
     private String ultimoTextoRecibido = "";
@@ -34,56 +34,51 @@ public class SugoBotService extends AccessibilityService {
     @Override
     protected void onServiceConnected() {
         super.onServiceConnected();
-        // Nota: La configuración detallada ahora se maneja de forma segura desde el archivo XML.
-        mostrarAlerta("🤖 LatinBot: Servicio Conectado y Listo");
+        mostrarAlerta("🤖 LatinBot: Servicio Re-conectado y blindado.");
     }
 
     @Override
     public void onAccessibilityEvent(AccessibilityEvent event) {
-        // 1. FILTRAR Y INTERCEPTAR NOTIFICACIONES TRAS TRAS BAMBALINAS
-        if (event.getEventType() == AccessibilityEvent.TYPE_NOTIFICATION_STATE_CHANGED) {
-            evaluarYAbrirNotificacion(event);
-            return;
-        }
-
-        // 2. DETECTAR CAMBIOS EN LA PANTALLA DE SUGO
-        if (event.getEventType() == AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED || event.getEventType() == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
-            if (System.currentTimeMillis() - ultimoTiempoProceso > 1500) { 
-                leerYProcesarPantalla();
+        try {
+            if (event.getEventType() == AccessibilityEvent.TYPE_NOTIFICATION_STATE_CHANGED) {
+                evaluarYAbrirNotificacion(event);
+                return;
             }
+
+            if (event.getEventType() == AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED || event.getEventType() == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
+                if (System.currentTimeMillis() - ultimoTiempoProceso > 2000) { 
+                    leerYProcesarPantalla();
+                }
+            }
+        } catch (Exception e) {
+            // Evita que el servicio colapse por completo si hay un error
         }
     }
 
-    // --- ESCUDO INTELIGENTE DE NOTIFICACIONES ---
     private void evaluarYAbrirNotificacion(AccessibilityEvent event) {
         if (event.getParcelableData() != null && event.getParcelableData() instanceof Notification) {
             Notification notification = (Notification) event.getParcelableData();
             
-            // Extraer el texto real que viene dentro de la notificación flotante
-            CharSequence tickerText = notification.tickerText;
             String textoNotificacion = "";
-            if (tickerText != null) {
-                textoNotificacion = tickerText.toString().toLowerCase();
+            if (notification.tickerText != null) {
+                textoNotificacion = notification.tickerText.toString().toLowerCase();
             } else if (notification.extras != null) {
                 CharSequence bigText = notification.extras.getCharSequence(Notification.EXTRA_TEXT);
                 if (bigText != null) textoNotificacion = bigText.toString().toLowerCase();
             }
 
-            // Validar si el texto contiene basura antes de abrirlo
-            for (String palabra : PALABRAS_BLOQUEADAS) {
-                if (!textoNotificacion.isEmpty() && textoNotificacion.contains(palabra)) {
-                    // Es un mensaje basura del sistema, lo ignoramos por completo
-                    return; 
+            // Si hay texto, filtramos. Si no hay texto, abrimos igual por precaución.
+            if (!textoNotificacion.isEmpty()) {
+                for (String palabra : PALABRAS_BLOQUEADAS) {
+                    if (textoNotificacion.contains(palabra)) return; // Ignora basura
                 }
             }
 
-            // Si pasa el filtro, procedemos a simular el toque para abrir el chat
             if (notification.contentIntent != null) {
                 try {
-                    mostrarAlerta("🔔 Mensaje válido detectado. Abriendo chat...");
                     notification.contentIntent.send();
                 } catch (PendingIntent.CanceledException e) {
-                    mostrarAlerta("❌ Error al abrir la notificación.");
+                    // Fallo al abrir
                 }
             }
         }
@@ -95,24 +90,19 @@ public class SugoBotService extends AccessibilityService {
 
         String textoCapturado = extraerUltimoMensajeReal(rootNode); 
 
-        if (textoCapturado.isEmpty() || textoCapturado.equals(ultimoTextoRecibido)) {
-            return; 
-        }
+        if (textoCapturado.isEmpty() || textoCapturado.equals(ultimoTextoRecibido)) return; 
 
         ultimoTiempoProceso = System.currentTimeMillis();
         ultimoTextoRecibido = textoCapturado;
         
-        mostrarAlerta("📩 Leyendo mensaje: " + textoCapturado);
+        mostrarAlerta("📩 Leyendo: " + textoCapturado);
         enviarARender(textoCapturado);
     }
 
     private String extraerUltimoMensajeReal(AccessibilityNodeInfo nodo) {
         List<String> textosEnPantalla = new ArrayList<>();
         recorrerNodosBuscandoTexto(nodo, textosEnPantalla);
-        
-        if (textosEnPantalla.size() > 0) {
-            return textosEnPantalla.get(textosEnPantalla.size() - 1);
-        }
+        if (textosEnPantalla.size() > 0) return textosEnPantalla.get(textosEnPantalla.size() - 1);
         return "";
     }
 
@@ -138,11 +128,9 @@ public class SugoBotService extends AccessibilityService {
                 HttpURLConnection conn = (HttpURLConnection) url.openConnection();
                 conn.setRequestMethod("POST");
                 conn.setRequestProperty("Content-Type", "application/json; utf-8");
-                conn.setRequestProperty("Accept", "text/plain");
                 conn.setDoOutput(true);
 
-                String mensajeSeguro = mensaje.replace("\"", "\\\"").replace("\n", " ");
-                String jsonInputString = "{\"message\": \"" + mensajeSeguro + "\", \"user_id\": \"telefono_1\"}";
+                String jsonInputString = "{\"message\": \"" + mensaje.replace("\"", "\\\"") + "\", \"user_id\": \"telefono_1\"}";
 
                 try(OutputStream os = conn.getOutputStream()) {
                     byte[] input = jsonInputString.getBytes("utf-8");
@@ -152,49 +140,46 @@ public class SugoBotService extends AccessibilityService {
                 BufferedReader br = new BufferedReader(new InputStreamReader(conn.getInputStream(), "utf-8"));
                 StringBuilder response = new StringBuilder();
                 String responseLine;
-                while ((responseLine = br.readLine()) != null) {
-                    response.append(responseLine.trim());
-                }
+                while ((responseLine = br.readLine()) != null) response.append(responseLine.trim());
 
                 String respuestaIA = response.toString();
 
-                // 🚨 CRÍTICO: Obligamos a ejecutar la escritura en el Hilo Principal de la interfaz
                 new Handler(Looper.getMainLooper()).post(() -> {
-                    mostrarAlerta("🧠 IA respondió. Intentando escribir...");
-                    escribirMensajeUniversal(respuestaIA);
+                    escribirMensajeConPortapapeles(respuestaIA);
                 });
 
             } catch (Exception e) {
-                new Handler(Looper.getMainLooper()).post(() -> 
-                    mostrarAlerta("❌ Error de red conectando a Render.")
-                );
+                new Handler(Looper.getMainLooper()).post(() -> mostrarAlerta("❌ Fallo conexión a Render"));
             }
         }).start();
     }
 
-    private void escribirMensajeUniversal(String textoResponder) {
+    // EL NUEVO MÉTODO MACRODROID: Usa el portapapeles del teléfono para forzar el pegado
+    private void escribirMensajeConPortapapeles(String textoResponder) {
         AccessibilityNodeInfo rootNode = getRootInActiveWindow();
         if (rootNode == null) return;
 
         AccessibilityNodeInfo cajaDeTexto = encontrarCajaDeTexto(rootNode);
         if (cajaDeTexto != null) {
-            Bundle arguments = new Bundle();
-            arguments.putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, textoResponder);
-            cajaDeTexto.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, arguments);
             
-            // Pequeña pausa de estabilización física
-            try { Thread.sleep(500); } catch (Exception e) {} 
+            // 1. Copiar al Portapapeles
+            ClipboardManager clipboard = (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
+            ClipData clip = ClipData.newPlainText("IA", textoResponder);
+            clipboard.setPrimaryClip(clip);
+
+            // 2. Tocar la casilla y Pegar físicamente
+            cajaDeTexto.performAction(AccessibilityNodeInfo.ACTION_FOCUS);
+            cajaDeTexto.performAction(AccessibilityNodeInfo.ACTION_PASTE);
             
+            try { Thread.sleep(600); } catch (Exception e) {} 
+            
+            // 3. Enviar
             AccessibilityNodeInfo rootActualizado = getRootInActiveWindow();
             AccessibilityNodeInfo botonEnviar = encontrarBotonEnviar(rootActualizado);
             if (botonEnviar != null) {
                 botonEnviar.performAction(AccessibilityNodeInfo.ACTION_CLICK);
-                mostrarAlerta("✅ ¡Mensaje enviado con éxito!");
-            } else {
-                mostrarAlerta("⚠️ Caja llena, pero botón Enviar no hallado.");
+                mostrarAlerta("✅ Enviado!");
             }
-        } else {
-            mostrarAlerta("⚠️ No se encontró la casilla de entrada.");
         }
     }
 
@@ -212,11 +197,12 @@ public class SugoBotService extends AccessibilityService {
 
     private AccessibilityNodeInfo encontrarBotonEnviar(AccessibilityNodeInfo nodo) {
         if (nodo == null) return null;
-        if (nodo.isClickable()) {
-            if (nodo.getViewIdResourceName() != null && nodo.getViewIdResourceName().toLowerCase().contains("send")) return nodo;
-            if (nodo.getContentDescription() != null && nodo.getContentDescription().toString().toLowerCase().contains("send")) return nodo;
-            if (nodo.getContentDescription() != null && nodo.getContentDescription().toString().toLowerCase().contains("enviar")) return nodo;
-        }
+        if (nodo.isClickable() && (
+            (nodo.getViewIdResourceName() != null && nodo.getViewIdResourceName().toLowerCase().contains("send")) ||
+            (nodo.getContentDescription() != null && nodo.getContentDescription().toString().toLowerCase().contains("send")) ||
+            (nodo.getContentDescription() != null && nodo.getContentDescription().toString().toLowerCase().contains("enviar"))
+        )) return nodo;
+        
         for (int i = 0; i < nodo.getChildCount(); i++) {
             AccessibilityNodeInfo resultado = encontrarBotonEnviar(nodo.getChild(i));
             if (resultado != null) return resultado;
@@ -225,9 +211,7 @@ public class SugoBotService extends AccessibilityService {
     }
 
     private void mostrarAlerta(String mensaje) {
-        new Handler(Looper.getMainLooper()).post(() -> 
-            Toast.makeText(getApplicationContext(), mensaje, Toast.LENGTH_SHORT).show()
-        );
+        Toast.makeText(getApplicationContext(), mensaje, Toast.LENGTH_SHORT).show();
     }
 
     @Override
