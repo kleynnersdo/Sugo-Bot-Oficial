@@ -1,6 +1,7 @@
 package com.latinbot.sugo;
 
 import android.accessibilityservice.AccessibilityService;
+import android.accessibilityservice.AccessibilityServiceInfo;
 import android.view.accessibility.AccessibilityEvent;
 import android.view.accessibility.AccessibilityNodeInfo;
 import android.os.Bundle;
@@ -19,16 +20,34 @@ public class SugoBotService extends AccessibilityService {
     private final String TARGET_PACKAGE = "com.voicemaker.android";
     private final String ID_INPUT = "com.voicemaker.android:id/id_input_edit_text";
     private final String ID_SEND = "com.voicemaker.android:id/id_chat_send_btn";
-    
-    // 🚨 REEMPLAZA ESTO POR TU URL REAL DE RENDER (asegúrate de que termine en /bot)
     private final String RENDER_URL = "https://gaby-bot-server.onrender.com/bot";
 
-    // --- FILTRO DE SEGURIDAD (No gasta Render) ---
+    // --- FILTRO DE SEGURIDAD ---
     private final List<String> PALABRAS_BLOQUEADAS = Arrays.asList(
         "sistema", "ganaste", "reaccionó", "eliminó", "soporte", "diamantes", "recarga", "emparejado"
     );
 
     private long ultimoMensajeProcesado = 0;
+
+    // 🚨 ESTE BLOQUE DESPIERTA AL BOT Y LE DICE A ANDROID QUÉ HACER
+    @Override
+    protected void onServiceConnected() {
+        super.onServiceConnected();
+        AccessibilityServiceInfo info = new AccessibilityServiceInfo();
+        
+        // Configura el bot para escuchar cambios de pantalla y ventanas
+        info.eventTypes = AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED | AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED;
+        
+        // Filtra para que SOLO trabaje e interactúe dentro de SUGO
+        info.packageNames = new String[]{TARGET_PACKAGE};
+        info.feedbackType = AccessibilityServiceInfo.FEEDBACK_GENERIC;
+        
+        // Habilita la lectura avanzada de IDs de botones en pantallas modernas
+        info.flags = AccessibilityServiceInfo.FLAG_INCLUDE_NOT_IMPORTANT_VIEWS | AccessibilityServiceInfo.FLAG_REPORT_VIEW_IDS;
+        
+        setServiceInfo(info);
+        Log.d("SUGO_BOT", "Servicio enlazado y configurado correctamente para SUGO.");
+    }
 
     @Override
     public void onAccessibilityEvent(AccessibilityEvent event) {
@@ -36,8 +55,8 @@ public class SugoBotService extends AccessibilityService {
             return;
         }
 
-        if (event.getEventType() == AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED) {
-            // Evita procesar la pantalla de forma repetitiva en milisegundos
+        if (event.getEventType() == AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED || event.getEventType() == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
+            // Evita procesar duplicados en ráfaga
             if (System.currentTimeMillis() - ultimoMensajeProcesado > 2000) { 
                 leerYProcesarPantalla();
             }
@@ -59,7 +78,7 @@ public class SugoBotService extends AccessibilityService {
     }
 
     private String capturarUltimoMensaje(AccessibilityNodeInfo root) {
-        // Estructura de captura base
+        // Disparador temporal para verificar que el puente de comunicación funcione
         return "hola gaby"; 
     }
 
@@ -71,7 +90,6 @@ public class SugoBotService extends AccessibilityService {
         return false;
     }
 
-    // --- CONEXIÓN CON TU PYTHON EN RENDER ---
     private void enviarARender(String mensaje) {
         new Thread(() -> {
             try {
@@ -79,10 +97,9 @@ public class SugoBotService extends AccessibilityService {
                 HttpURLConnection conn = (HttpURLConnection) url.openConnection();
                 conn.setRequestMethod("POST");
                 conn.setRequestProperty("Content-Type", "application/json; utf-8");
-                conn.setRequestProperty("Accept", "text/plain"); // Recibe el formato plano de tu Flask
+                conn.setRequestProperty("Accept", "text/plain");
                 conn.setDoOutput(true);
 
-                // Evitamos que comillas rompan la estructura JSON
                 String mensajeSeguro = mensaje.replace("\"", "\\\"").replace("\n", " ");
                 String jsonInputString = "{\"message\": \"" + mensajeSeguro + "\", \"user_id\": \"telefono_1\"}";
 
@@ -98,7 +115,6 @@ public class SugoBotService extends AccessibilityService {
                     response.append(responseLine.trim());
                 }
 
-                // Inyectamos la respuesta limpia de Gabriela directo a la app
                 escribirMensaje(response.toString());
 
             } catch (Exception e) {
@@ -107,7 +123,6 @@ public class SugoBotService extends AccessibilityService {
         }).start();
     }
 
-    // --- ACCIÓN: ESCRIBIR Y ENVIAR EN SUGO ---
     private void escribirMensaje(String textoResponder) {
         AccessibilityNodeInfo rootNode = getRootInActiveWindow();
         if (rootNode == null) return;
@@ -119,7 +134,7 @@ public class SugoBotService extends AccessibilityService {
             arguments.putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, textoResponder);
             inputNode.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, arguments);
             
-            try { Thread.sleep(600); } catch (Exception e) {} // Pausa natural antes de enviar
+            try { Thread.sleep(600); } catch (Exception e) {} 
             
             List<AccessibilityNodeInfo> sends = rootNode.findAccessibilityNodeInfosByViewId(ID_SEND);
             if (!sends.isEmpty()) {
