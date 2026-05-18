@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">LatinBot IA</string>
+    <string name="service_description">Asistente de IA para gestion automatizada de respuestas en SUGO</string>
+</resources>
