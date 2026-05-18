@@ -5,7 +5,12 @@ import android.accessibilityservice.AccessibilityServiceInfo;
 import android.view.accessibility.AccessibilityEvent;
 import android.view.accessibility.AccessibilityNodeInfo;
 import android.os.Bundle;
-import android.util.Log;
+import android.os.Handler;
+import android.os.Looper;
+import android.widget.Toast;
+import android.app.Notification;
+import android.app.PendingIntent;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.io.BufferedReader;
@@ -16,49 +21,58 @@ import java.net.URL;
 
 public class SugoBotService extends AccessibilityService {
 
-    // --- CONFIGURACIÓN DE TU APP Y API ---
-    private final String TARGET_PACKAGE = "com.voicemaker.android";
-    private final String ID_INPUT = "com.voicemaker.android:id/id_input_edit_text";
-    private final String ID_SEND = "com.voicemaker.android:id/id_chat_send_btn";
     private final String RENDER_URL = "https://gaby-bot-server.onrender.com/bot";
 
-    // --- FILTRO DE SEGURIDAD ---
     private final List<String> PALABRAS_BLOQUEADAS = Arrays.asList(
         "sistema", "ganaste", "reaccionó", "eliminó", "soporte", "diamantes", "recarga", "emparejado"
     );
 
-    private long ultimoMensajeProcesado = 0;
+    private String ultimoTextoRecibido = "";
+    private long ultimoTiempoProceso = 0;
 
-    // 🚨 ESTE BLOQUE DESPIERTA AL BOT Y LE DICE A ANDROID QUÉ HACER
     @Override
     protected void onServiceConnected() {
         super.onServiceConnected();
         AccessibilityServiceInfo info = new AccessibilityServiceInfo();
         
-        // Configura el bot para escuchar cambios de pantalla y ventanas
-        info.eventTypes = AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED | AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED;
+        // 🚨 CRÍTICO: Ahora escucha Pantallas Y Notificaciones
+        info.eventTypes = AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED | AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED | AccessibilityEvent.TYPE_NOTIFICATION_STATE_CHANGED;
         
-        // Filtra para que SOLO trabaje e interactúe dentro de SUGO
-        info.packageNames = new String[]{TARGET_PACKAGE};
+        info.packageNames = new String[]{"com.voicemaker.android", "com.fiya.android"};
         info.feedbackType = AccessibilityServiceInfo.FEEDBACK_GENERIC;
-        
-        // Habilita la lectura avanzada de IDs de botones en pantallas modernas
         info.flags = AccessibilityServiceInfo.FLAG_INCLUDE_NOT_IMPORTANT_VIEWS | AccessibilityServiceInfo.FLAG_REPORT_VIEW_IDS;
         
         setServiceInfo(info);
-        Log.d("SUGO_BOT", "Servicio enlazado y configurado correctamente para SUGO.");
+        mostrarAlerta("🤖 LatinBot: Interceptor de Notificaciones Activado");
     }
 
     @Override
     public void onAccessibilityEvent(AccessibilityEvent event) {
-        if (event.getPackageName() == null || !event.getPackageName().toString().equals(TARGET_PACKAGE)) {
+        // 1. SI LLEGA UNA NOTIFICACIÓN, LA ABRE AUTOMÁTICAMENTE
+        if (event.getEventType() == AccessibilityEvent.TYPE_NOTIFICATION_STATE_CHANGED) {
+            abrirNotificacion(event);
             return;
         }
 
+        // 2. SI LA PANTALLA CAMBIA (Ej. se abrió el chat), LEE Y RESPONDE
         if (event.getEventType() == AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED || event.getEventType() == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
-            // Evita procesar duplicados en ráfaga
-            if (System.currentTimeMillis() - ultimoMensajeProcesado > 2000) { 
+            if (System.currentTimeMillis() - ultimoTiempoProceso > 1500) { 
                 leerYProcesarPantalla();
+            }
+        }
+    }
+
+    // --- EL MOTOR QUE HACE CLIC EN LA NOTIFICACIÓN ---
+    private void abrirNotificacion(AccessibilityEvent event) {
+        if (event.getParcelableData() != null && event.getParcelableData() instanceof Notification) {
+            Notification notification = (Notification) event.getParcelableData();
+            if (notification.contentIntent != null) {
+                try {
+                    mostrarAlerta("🔔 Notificación detectada. Abriendo chat...");
+                    notification.contentIntent.send();
+                } catch (PendingIntent.CanceledException e) {
+                    mostrarAlerta("❌ Error al intentar abrir la notificación.");
+                }
             }
         }
     }
@@ -67,19 +81,42 @@ public class SugoBotService extends AccessibilityService {
         AccessibilityNodeInfo rootNode = getRootInActiveWindow();
         if (rootNode == null) return;
 
-        String textoCapturado = capturarUltimoMensaje(rootNode); 
+        String textoCapturado = extraerUltimoMensajeReal(rootNode); 
 
-        if (textoCapturado.isEmpty() || esMensajeBasura(textoCapturado)) {
+        if (textoCapturado.isEmpty() || textoCapturado.equals(ultimoTextoRecibido) || esMensajeBasura(textoCapturado)) {
             return; 
         }
 
-        ultimoMensajeProcesado = System.currentTimeMillis();
+        ultimoTiempoProceso = System.currentTimeMillis();
+        ultimoTextoRecibido = textoCapturado;
+        
+        mostrarAlerta("📩 Leyendo: " + textoCapturado);
         enviarARender(textoCapturado);
     }
 
-    private String capturarUltimoMensaje(AccessibilityNodeInfo root) {
-        // Disparador temporal para verificar que el puente de comunicación funcione
-        return "hola gaby"; 
+    private String extraerUltimoMensajeReal(AccessibilityNodeInfo nodo) {
+        List<String> textosEnPantalla = new ArrayList<>();
+        recorrerNodosBuscandoTexto(nodo, textosEnPantalla);
+        
+        if (textosEnPantalla.size() > 0) {
+            return textosEnPantalla.get(textosEnPantalla.size() - 1);
+        }
+        return "";
+    }
+
+    private void recorrerNodosBuscandoTexto(AccessibilityNodeInfo nodo, List<String> lista) {
+        if (nodo == null) return;
+        if (nodo.getClassName() != null && nodo.getClassName().toString().equals("android.widget.TextView")) {
+            if (nodo.getText() != null) {
+                String txt = nodo.getText().toString().trim();
+                if (txt.length() > 1 && !txt.equalsIgnoreCase("Type a message") && !txt.equalsIgnoreCase("Escribe un mensaje")) {
+                    lista.add(txt);
+                }
+            }
+        }
+        for (int i = 0; i < nodo.getChildCount(); i++) {
+            recorrerNodosBuscandoTexto(nodo.getChild(i), lista);
+        }
     }
 
     private boolean esMensajeBasura(String texto) {
@@ -115,32 +152,70 @@ public class SugoBotService extends AccessibilityService {
                     response.append(responseLine.trim());
                 }
 
-                escribirMensaje(response.toString());
+                mostrarAlerta("🧠 Respuesta generada. Inyectando...");
+                escribirMensajeUniversal(response.toString());
 
             } catch (Exception e) {
-                Log.e("SUGO_BOT", "Error en Render: " + e.getMessage());
+                mostrarAlerta("❌ Error conectando al servidor.");
             }
         }).start();
     }
 
-    private void escribirMensaje(String textoResponder) {
+    private void escribirMensajeUniversal(String textoResponder) {
         AccessibilityNodeInfo rootNode = getRootInActiveWindow();
         if (rootNode == null) return;
 
-        List<AccessibilityNodeInfo> inputs = rootNode.findAccessibilityNodeInfosByViewId(ID_INPUT);
-        if (!inputs.isEmpty()) {
-            AccessibilityNodeInfo inputNode = inputs.get(0);
+        AccessibilityNodeInfo cajaDeTexto = encontrarCajaDeTexto(rootNode);
+        if (cajaDeTexto != null) {
             Bundle arguments = new Bundle();
             arguments.putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, textoResponder);
-            inputNode.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, arguments);
+            cajaDeTexto.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, arguments);
             
-            try { Thread.sleep(600); } catch (Exception e) {} 
+            try { Thread.sleep(1000); } catch (Exception e) {} 
             
-            List<AccessibilityNodeInfo> sends = rootNode.findAccessibilityNodeInfosByViewId(ID_SEND);
-            if (!sends.isEmpty()) {
-                sends.get(0).performAction(AccessibilityNodeInfo.ACTION_CLICK);
+            AccessibilityNodeInfo rootActualizado = getRootInActiveWindow();
+            AccessibilityNodeInfo botonEnviar = encontrarBotonEnviar(rootActualizado);
+            if (botonEnviar != null) {
+                botonEnviar.performAction(AccessibilityNodeInfo.ACTION_CLICK);
+                mostrarAlerta("✅ ¡Bot: Mensaje enviado!");
+            } else {
+                mostrarAlerta("⚠️ Botón de enviar no encontrado.");
             }
+        } else {
+            mostrarAlerta("⚠️ Caja de texto no encontrada.");
         }
+    }
+
+    private AccessibilityNodeInfo encontrarCajaDeTexto(AccessibilityNodeInfo nodo) {
+        if (nodo == null) return null;
+        if (nodo.getClassName() != null && nodo.getClassName().toString().equals("android.widget.EditText")) {
+            return nodo;
+        }
+        for (int i = 0; i < nodo.getChildCount(); i++) {
+            AccessibilityNodeInfo resultado = encontrarCajaDeTexto(nodo.getChild(i));
+            if (resultado != null) return resultado;
+        }
+        return null;
+    }
+
+    private AccessibilityNodeInfo encontrarBotonEnviar(AccessibilityNodeInfo nodo) {
+        if (nodo == null) return null;
+        if (nodo.isClickable()) {
+            if (nodo.getViewIdResourceName() != null && nodo.getViewIdResourceName().toLowerCase().contains("send")) return nodo;
+            if (nodo.getContentDescription() != null && nodo.getContentDescription().toString().toLowerCase().contains("send")) return nodo;
+            if (nodo.getContentDescription() != null && nodo.getContentDescription().toString().toLowerCase().contains("enviar")) return nodo;
+        }
+        for (int i = 0; i < nodo.getChildCount(); i++) {
+            AccessibilityNodeInfo resultado = encontrarBotonEnviar(nodo.getChild(i));
+            if (resultado != null) return resultado;
+        }
+        return null;
+    }
+
+    private void mostrarAlerta(String mensaje) {
+        new Handler(Looper.getMainLooper()).post(() -> 
+            Toast.makeText(getApplicationContext(), mensaje, Toast.LENGTH_SHORT).show()
+        );
     }
 
     @Override
