@@ -4,11 +4,11 @@ plugins {
 
 android {
     namespace 'com.latinbot.sugo'
-    compileSdk 34
+    compileSdk 34 // O la versión que tengas configurada
 
     defaultConfig {
         applicationId "com.latinbot.sugo"
-        minSdk 21
+        minSdk 26
         targetSdk 34
         versionCode 1
         versionName "1.0"

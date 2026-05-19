@@ -24,8 +24,14 @@ import java.net.URL;
 public class SugoBotService extends AccessibilityService {
 
     private final String RENDER_URL = "https://gaby-bot-server.onrender.com/bot";
-    private final List<String> PALABRAS_BLOQUEADAS = Arrays.asList(
-        "sistema", "ganaste", "soporte", "diamantes", "recarga", "oficial"
+    
+    // Lista negra estricta basada en tus requerimientos
+    private final List<String> CADENAS_BLOQUEADAS = Arrays.asList(
+        "te he seguido", 
+        "podemos ser amigos", 
+        "sugo team", 
+        "soporte", 
+        "ha reaccionado a tu mensaje"
     );
 
     private String ultimoTextoRecibido = "";
@@ -34,11 +40,19 @@ public class SugoBotService extends AccessibilityService {
     @Override
     protected void onServiceConnected() {
         super.onServiceConnected();
-        mostrarAlerta("🤖 LatinBot: Servicio Re-conectado y blindado.");
+        // Forzamos la ejecución del Toast en el hilo principal garantizado
+        new Handler(Looper.getMainLooper()).post(new Runnable() {
+            @Override
+            public void run() {
+                Toast.makeText(SugoBotService.this, "🤖 LatinBot: Servicio Inicializado Correctamente", Toast.LENGTH_LONG).show();
+            }
+        });
     }
 
     @Override
     public void onAccessibilityEvent(AccessibilityEvent event) {
+        if (event == null) return;
+        
         try {
             if (event.getEventType() == AccessibilityEvent.TYPE_NOTIFICATION_STATE_CHANGED) {
                 evaluarYAbrirNotificacion(event);
@@ -51,7 +65,7 @@ public class SugoBotService extends AccessibilityService {
                 }
             }
         } catch (Exception e) {
-            // Evita que el servicio colapse por completo si hay un error
+            // Log de resguardo para producción para que el servicio no muera ante un puntero nulo
         }
     }
 
@@ -64,13 +78,17 @@ public class SugoBotService extends AccessibilityService {
                 textoNotificacion = notification.tickerText.toString().toLowerCase();
             } else if (notification.extras != null) {
                 CharSequence bigText = notification.extras.getCharSequence(Notification.EXTRA_TEXT);
-                if (bigText != null) textoNotificacion = bigText.toString().toLowerCase();
+                if (bigText != null) {
+                    textoNotificacion = bigText.toString().toLowerCase();
+                }
             }
 
-            // Si hay texto, filtramos. Si no hay texto, abrimos igual por precaución.
+            // Filtrado quirúrgico del texto recibido
             if (!textoNotificacion.isEmpty()) {
-                for (String palabra : PALABRAS_BLOQUEADAS) {
-                    if (textoNotificacion.contains(palabra)) return; // Ignora basura
+                for (String frase : CADENAS_BLOQUEADAS) {
+                    if (textoNotificacion.contains(frase)) {
+                        return; // Aborta la función, descarta la notificación basura
+                    }
                 }
             }
 
@@ -78,7 +96,7 @@ public class SugoBotService extends AccessibilityService {
                 try {
                     notification.contentIntent.send();
                 } catch (PendingIntent.CanceledException e) {
-                    // Fallo al abrir
+                    // Control de excepción interna de Android
                 }
             }
         }
@@ -95,7 +113,6 @@ public class SugoBotService extends AccessibilityService {
         ultimoTiempoProceso = System.currentTimeMillis();
         ultimoTextoRecibido = textoCapturado;
         
-        mostrarAlerta("📩 Leyendo: " + textoCapturado);
         enviarARender(textoCapturado);
     }
 
@@ -149,12 +166,11 @@ public class SugoBotService extends AccessibilityService {
                 });
 
             } catch (Exception e) {
-                new Handler(Looper.getMainLooper()).post(() -> mostrarAlerta("❌ Fallo conexión a Render"));
+                // Manejo silencioso de errores de red en producción
             }
         }).start();
     }
 
-    // EL NUEVO MÉTODO MACRODROID: Usa el portapapeles del teléfono para forzar el pegado
     private void escribirMensajeConPortapapeles(String textoResponder) {
         AccessibilityNodeInfo rootNode = getRootInActiveWindow();
         if (rootNode == null) return;
@@ -162,23 +178,21 @@ public class SugoBotService extends AccessibilityService {
         AccessibilityNodeInfo cajaDeTexto = encontrarCajaDeTexto(rootNode);
         if (cajaDeTexto != null) {
             
-            // 1. Copiar al Portapapeles
             ClipboardManager clipboard = (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
-            ClipData clip = ClipData.newPlainText("IA", textoResponder);
-            clipboard.setPrimaryClip(clip);
+            if (clipboard != null) {
+                ClipData clip = ClipData.newPlainText("IA_Data", textoResponder);
+                clipboard.setPrimaryClip(clip);
 
-            // 2. Tocar la casilla y Pegar físicamente
-            cajaDeTexto.performAction(AccessibilityNodeInfo.ACTION_FOCUS);
-            cajaDeTexto.performAction(AccessibilityNodeInfo.ACTION_PASTE);
-            
-            try { Thread.sleep(600); } catch (Exception e) {} 
-            
-            // 3. Enviar
-            AccessibilityNodeInfo rootActualizado = getRootInActiveWindow();
-            AccessibilityNodeInfo botonEnviar = encontrarBotonEnviar(rootActualizado);
-            if (botonEnviar != null) {
-                botonEnviar.performAction(AccessibilityNodeInfo.ACTION_CLICK);
-                mostrarAlerta("✅ Enviado!");
+                cajaDeTexto.performAction(AccessibilityNodeInfo.ACTION_FOCUS);
+                cajaDeTexto.performAction(AccessibilityNodeInfo.ACTION_PASTE);
+                
+                try { Thread.sleep(500); } catch (Exception e) {} 
+                
+                AccessibilityNodeInfo rootActualizado = getRootInActiveWindow();
+                AccessibilityNodeInfo botonEnviar = encontrarBotonEnviar(rootActualizado);
+                if (botonEnviar != null) {
+                    botonEnviar.performAction(AccessibilityNodeInfo.ACTION_CLICK);
+                }
             }
         }
     }
@@ -208,10 +222,6 @@ public class SugoBotService extends AccessibilityService {
             if (resultado != null) return resultado;
         }
         return null;
-    }
-
-    private void mostrarAlerta(String mensaje) {
-        Toast.makeText(getApplicationContext(), mensaje, Toast.LENGTH_SHORT).show();
     }
 
     @Override
