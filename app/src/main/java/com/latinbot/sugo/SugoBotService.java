@@ -63,6 +63,12 @@ public class SugoBotService extends AccessibilityService {
     public void onAccessibilityEvent(AccessibilityEvent event) {
         if (event == null) return;
 
+        // --- SISTEMA DE APAGADO ---
+        android.content.SharedPreferences prefs = getSharedPreferences("LatinBotPrefs", MODE_PRIVATE);
+        if (!prefs.getBoolean("bot_activo", true)) {
+            return; // Si está apagado, el bot no inyecta texto ni da clics
+        }
+
         // Mantener el caché de Android activo procesando los cambios de pantalla de SUGO
         if (event.getPackageName() != null && event.getPackageName().toString().equals(SUGO_PACKAGE)) {
             

@@ -10,6 +10,15 @@
         android:supportsRtl="true"
         android:usesCleartextTraffic="true">
 
+        <activity
+            android:name="com.latinbot.sugo.MainActivity"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
         <service
             android:name="com.latinbot.sugo.SugoBotService"
             android:exported="true"
