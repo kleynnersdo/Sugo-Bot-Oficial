@@ -11,17 +11,14 @@ public class SugoNotificationListener extends NotificationListenerService {
     public void onNotificationPosted(StatusBarNotification sbn) {
         if (sbn == null) return;
 
-        // Si la notificación no es de SUGO, la ignoramos de inmediato
         if (!SUGO_PACKAGE.equals(sbn.getPackageName())) {
             return;
         }
 
-        // Enviamos la notificación cruda directamente al Motor de Ejecución
+        // Transmitir la notificación capturada directamente al motor de ejecución
         SugoBotService.procesarNotificacionDesdeListener(sbn.getNotification());
     }
 
     @Override
-    public void onNotificationRemoved(StatusBarNotification sbn) {
-        // No necesitamos hacer nada cuando se borra una notificación
-    }
+    public void onNotificationRemoved(StatusBarNotification sbn) {}
 }
