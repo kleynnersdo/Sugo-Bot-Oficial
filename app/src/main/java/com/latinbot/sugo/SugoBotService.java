@@ -20,15 +20,15 @@ import java.net.URL;
 
 public class SugoBotService extends AccessibilityService {
 
+    // Instancia estática para conectar los dos motores
+    private static SugoBotService instanciaActiva;
+
     private final String RENDER_URL = "https://gaby-bot-server.onrender.com/bot";
-    private final String SUGO_PACKAGE = "com.voicemaker.android";
     
-    // IDs de control provistos
     private final String ID_CAJA_TEXTO = "com.voicemaker.android:id/id_input_edit_text";
     private final String ID_BOTON_ENVIAR = "com.voicemaker.android:id/id_chat_send_btn";
     private final String ID_PERFIL_AVATAR = "com.voicemaker.android:id/id_chatting_title_avatar_iv";
 
-    // Lista de notificaciones bloqueadas actualizada estrictamente por el Jefe
     private final List<String> CADENAS_BLOQUEADAS = Arrays.asList(
         "sugo team", 
         "asist. anfitrion", 
@@ -55,65 +55,61 @@ public class SugoBotService extends AccessibilityService {
     private long tiempoUltimoMensaje = 0;
 
     @Override
-    public void onAccessibilityEvent(AccessibilityEvent event) {
-        if (event == null) return;
+    protected void onServiceConnected() {
+        super.onServiceConnected();
+        instanciaActiva = this; // Guardamos la conexión activa
+    }
 
-        // Validar estrictamente el paquete de origen
-        if (event.getPackageName() == null || !event.getPackageName().toString().equals(SUGO_PACKAGE)) {
-            return;
-        }
-        
-        try {
-            // El único disparador del bot son las notificaciones entrantes de la barra superior
-            if (event.getEventType() == AccessibilityEvent.TYPE_NOTIFICATION_STATE_CHANGED) {
-                filtrarYEncolarNotificacion(event);
-            }
-        } catch (Exception e) {
-            // Evitar detenciones del servicio
+    // EL BOTÓN DE ACCESIBILIDAD YA NO BUSCA NOTIFICACIONES. SOLO SE ENFOCA EN LA PANTALLA.
+    @Override
+    public void onAccessibilityEvent(AccessibilityEvent event) {
+        // Queda vacío intencionalmente. Ya no leemos eventos de la pantalla ni de notificaciones por esta vía defectuosa.
+    }
+
+    // NUEVO PUERTO DE ENTRADA: Recibe la información 100% segura del NotificationListener
+    public static void procesarNotificacionDesdeListener(Notification notification) {
+        if (instanciaActiva != null) {
+            instanciaActiva.filtrarYEncolar(notification);
         }
     }
 
-    private void filtrarYEncolarNotificacion(AccessibilityEvent event) {
-        if (event.getParcelableData() != null && event.getParcelableData() instanceof Notification) {
-            Notification notification = (Notification) event.getParcelableData();
-            
-            String textoNotificacion = "";
-            if (notification.extras != null) {
-                CharSequence text = notification.extras.getCharSequence(Notification.EXTRA_TEXT);
-                if (text != null) textoNotificacion = text.toString();
-            } else if (notification.tickerText != null) {
-                textoNotificacion = notification.tickerText.toString();
+    private void filtrarYEncolar(Notification notification) {
+        if (notification == null) return;
+        
+        String textoNotificacion = "";
+        if (notification.extras != null) {
+            CharSequence text = notification.extras.getCharSequence(Notification.EXTRA_TEXT);
+            if (text != null) textoNotificacion = text.toString();
+        } else if (notification.tickerText != null) {
+            textoNotificacion = notification.tickerText.toString();
+        }
+
+        if (textoNotificacion.trim().isEmpty()) return;
+
+        String textoLower = textoNotificacion.toLowerCase();
+        for (String frase : CADENAS_BLOQUEADAS) {
+            if (textoLower.contains(frase)) return; 
+        }
+
+        if (textoNotificacion.equals(ultimoMensajeProcesado) && (System.currentTimeMillis() - tiempoUltimoMensaje < 4000)) {
+            return; 
+        }
+
+        synchronized (colaDeTareas) {
+            for (BotTask tarea : colaDeTareas) {
+                if (tarea.mensaje.equals(textoNotificacion)) return;
             }
+        }
 
-            if (textoNotificacion.trim().isEmpty()) return;
+        ultimoMensajeProcesado = textoNotificacion;
+        tiempoUltimoMensaje = System.currentTimeMillis();
 
-            // Filtro estricto de exclusiones en minúsculas
-            String textoLower = textoNotificacion.toLowerCase();
-            for (String frase : CADENAS_BLOQUEADAS) {
-                if (textoLower.contains(frase)) return; 
-            }
-
-            // Evitar procesamiento duplicado inmediato
-            if (textoNotificacion.equals(ultimoMensajeProcesado) && (System.currentTimeMillis() - tiempoUltimoMensaje < 4000)) {
-                return; 
-            }
-
-            // Evitar duplicados dentro de la misma cola en espera
+        if (notification.contentIntent != null) {
             synchronized (colaDeTareas) {
-                for (BotTask tarea : colaDeTareas) {
-                    if (tarea.mensaje.equals(textoNotificacion)) return;
-                }
+                colaDeTareas.add(new BotTask(notification.contentIntent, textoNotificacion));
             }
-
-            ultimoMensajeProcesado = textoNotificacion;
-            tiempoUltimoMensaje = System.currentTimeMillis();
-
-            if (notification.contentIntent != null) {
-                synchronized (colaDeTareas) {
-                    colaDeTareas.add(new BotTask(notification.contentIntent, textoNotificacion));
-                }
-                procesarSiguienteTareaEnCola();
-            }
+            // Retornamos al hilo principal para procesar la cola
+            new Handler(Looper.getMainLooper()).post(this::procesarSiguienteTareaEnCola);
         }
     }
 
@@ -135,7 +131,7 @@ public class SugoBotService extends AccessibilityService {
 
     private void ejecutarFlujoDeRespuesta(BotTask tarea) {
         try {
-            tarea.intent.send(); // Abrir pantalla de chat
+            tarea.intent.send(); 
             
             new Thread(() -> {
                 String respuestaIA = solicitarRespuestaServidor(tarea.mensaje);
@@ -145,10 +141,9 @@ public class SugoBotService extends AccessibilityService {
                     return;
                 }
 
-                // Ejecución lineal sin bucles de retorno en el hilo principal
                 new Handler(Looper.getMainLooper()).postDelayed(() -> {
                     inyectarTextoYEnviarUnicaVez(respuestaIA);
-                }, 1300); // Espera estratégica para asegurar carga visual de SUGO
+                }, 1300); 
 
             }).start();
 
@@ -167,12 +162,10 @@ public class SugoBotService extends AccessibilityService {
         AccessibilityNodeInfo cajaDeTexto = encontrarNodoPorId(rootNode, ID_CAJA_TEXTO);
         
         if (cajaDeTexto != null) {
-            // NUEVA FUNCIÓN: Inyección directa mediante Bundle sin usar el portapapeles del teléfono
             Bundle arguments = new Bundle();
             arguments.putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, textoAResponder);
             cajaDeTexto.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, arguments);
             
-            // Pausa física mínima para asentamiento del texto en la interfaz
             try { Thread.sleep(300); } catch (Exception e) {} 
             
             AccessibilityNodeInfo rootActualizado = getRootInActiveWindow();
@@ -183,10 +176,7 @@ public class SugoBotService extends AccessibilityService {
             }
         }
         
-        // No hay reintentos. Se asume el envío único e inmediatamente se procede a la salida.
-        new Handler(Looper.getMainLooper()).postDelayed(() -> {
-            forzarSalidaDeChat();
-        }, 500);
+        new Handler(Looper.getMainLooper()).postDelayed(this::forzarSalidaDeChat, 500);
     }
 
     private void forzarSalidaDeChat() {
@@ -194,31 +184,24 @@ public class SugoBotService extends AccessibilityService {
         AccessibilityNodeInfo botonSalirPerfil = encontrarNodoPorId(rootNode, ID_PERFIL_AVATAR);
         
         if (botonSalirPerfil != null) {
-            // Intentar hacer clic en el avatar para salir
             boolean exitoClic = botonSalirPerfil.performAction(AccessibilityNodeInfo.ACTION_CLICK);
-            
-            // Si el nodo del avatar no es directamente clickeable, intentar con su contenedor padre
             if (!exitoClic && botonSalirPerfil.getParent() != null) {
                 botonSalirPerfil.getParent().performAction(AccessibilityNodeInfo.ACTION_CLICK);
             }
         } else {
-            // Respaldo global del sistema por si el chat cambió drásticamente de estado
             performGlobalAction(GLOBAL_ACTION_BACK);
         }
         
-        // Liberar el estado del servicio y avanzar al siguiente elemento de la cola de tareas
         new Handler(Looper.getMainLooper()).postDelayed(() -> {
             servicioOcupado = false;
             procesarSiguienteTareaEnCola();
-        }, 1100); // Tiempo óptimo para que la UI regrese a la vista global
+        }, 1100); 
     }
 
     private AccessibilityNodeInfo encontrarNodoPorId(AccessibilityNodeInfo root, String idCompleto) {
         if (root == null) return null;
         List<AccessibilityNodeInfo> nodos = root.findAccessibilityNodeInfosByViewId(idCompleto);
-        if (nodos != null && !nodos.isEmpty()) {
-            return nodos.get(0);
-        }
+        if (nodos != null && !nodos.isEmpty()) return nodos.get(0);
         return null;
     }
 
@@ -249,5 +232,7 @@ public class SugoBotService extends AccessibilityService {
     }
 
     @Override
-    public void onInterrupt() {}
+    public void onInterrupt() {
+        instanciaActiva = null;
+    }
 }
