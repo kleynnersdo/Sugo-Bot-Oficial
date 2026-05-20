@@ -12,9 +12,10 @@ import android.app.PendingIntent;
 import android.content.ClipData;
 import android.content.ClipboardManager;
 import android.content.Context;
-import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.LinkedList;
 import java.util.List;
+import java.util.Queue;
 import java.io.BufferedReader;
 import java.io.InputStreamReader;
 import java.io.OutputStream;
@@ -25,7 +26,6 @@ public class SugoBotService extends AccessibilityService {
 
     private final String RENDER_URL = "https://gaby-bot-server.onrender.com/bot";
     
-    // Lista negra estricta basada en tus requerimientos
     private final List<String> CADENAS_BLOQUEADAS = Arrays.asList(
         "te he seguido", 
         "podemos ser amigos", 
@@ -34,19 +34,25 @@ public class SugoBotService extends AccessibilityService {
         "ha reaccionado a tu mensaje"
     );
 
-    private String ultimoTextoRecibido = "";
-    private long ultimoTiempoProceso = 0;
+    // Estructura de datos para almacenar las tareas pendientes (Estructura de Cola)
+    private static class BotTask {
+        PendingIntent intent;
+        String mensaje;
+        BotTask(PendingIntent intent, String mensaje) {
+            this.intent = intent;
+            this.mensaje = mensaje;
+        }
+    }
+
+    private final Queue<BotTask> colaDeTareas = new LinkedList<>();
+    private boolean servicioOcupado = false;
+    private String ultimoMensajeGlobal = "";
+    private long tiempoUltimoMensaje = 0;
 
     @Override
     protected void onServiceConnected() {
         super.onServiceConnected();
-        // Forzamos la ejecución del Toast en el hilo principal garantizado
-        new Handler(Looper.getMainLooper()).post(new Runnable() {
-            @Override
-            public void run() {
-                Toast.makeText(SugoBotService.this, "🤖 LatinBot: Servicio Inicializado Correctamente", Toast.LENGTH_LONG).show();
-            }
-        });
+        logFlotante("🤖 Sistema de Cola de Respuestas Activado.");
     }
 
     @Override
@@ -54,146 +60,197 @@ public class SugoBotService extends AccessibilityService {
         if (event == null) return;
         
         try {
+            // El bot es estrictamente guiado por eventos de notificación entrantes
             if (event.getEventType() == AccessibilityEvent.TYPE_NOTIFICATION_STATE_CHANGED) {
-                evaluarYAbrirNotificacion(event);
-                return;
-            }
-
-            if (event.getEventType() == AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED || event.getEventType() == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
-                if (System.currentTimeMillis() - ultimoTiempoProceso > 2000) { 
-                    leerYProcesarPantalla();
-                }
+                filtrarYEncolarNotificacion(event);
             }
         } catch (Exception e) {
-            // Log de resguardo para producción para que el servicio no muera ante un puntero nulo
+            // Evitar cierres por excepciones de puntero nulo en la lectura del sistema
         }
     }
 
-    private void evaluarYAbrirNotificacion(AccessibilityEvent event) {
+    private void filtrarYEncolarNotificacion(AccessibilityEvent event) {
         if (event.getParcelableData() != null && event.getParcelableData() instanceof Notification) {
             Notification notification = (Notification) event.getParcelableData();
             
             String textoNotificacion = "";
-            if (notification.tickerText != null) {
-                textoNotificacion = notification.tickerText.toString().toLowerCase();
-            } else if (notification.extras != null) {
-                CharSequence bigText = notification.extras.getCharSequence(Notification.EXTRA_TEXT);
-                if (bigText != null) {
-                    textoNotificacion = bigText.toString().toLowerCase();
-                }
+            if (notification.extras != null) {
+                CharSequence text = notification.extras.getCharSequence(Notification.EXTRA_TEXT);
+                if (text != null) textoNotificacion = text.toString();
+            } else if (notification.tickerText != null) {
+                textoNotificacion = notification.tickerText.toString();
             }
 
-            // Filtrado quirúrgico del texto recibido
-            if (!textoNotificacion.isEmpty()) {
-                for (String frase : CADENAS_BLOQUEADAS) {
-                    if (textoNotificacion.contains(frase)) {
-                        return; // Aborta la función, descarta la notificación basura
-                    }
-                }
+            if (textoNotificacion.trim().isEmpty()) return;
+
+            // Filtro de cadenas prohibidas
+            String textoLower = textoNotificacion.toLowerCase();
+            for (String frase : CADENAS_BLOQUEADAS) {
+                if (textoLower.contains(frase)) return; 
             }
+
+            // Filtro Anti-Spam (Evitar duplicación en ráfaga corta)
+            if (textoNotificacion.equals(ultimoMensajeGlobal) && (System.currentTimeMillis() - tiempoUltimoMensaje < 4000)) {
+                return; 
+            }
+            
+            ultimoMensajeGlobal = textoNotificacion;
+            tiempoUltimoMensaje = System.currentTimeMillis();
 
             if (notification.contentIntent != null) {
-                try {
-                    notification.contentIntent.send();
-                } catch (PendingIntent.CanceledException e) {
-                    // Control de excepción interna de Android
+                // Añadimos de forma segura la estructura a la cola secuencial
+                synchronized (colaDeTareas) {
+                    colaDeTareas.add(new BotTask(notification.contentIntent, textoNotificacion));
                 }
+                procesarSiguienteTareaEnCola();
             }
         }
     }
 
-    private void leerYProcesarPantalla() {
+    private void procesarSiguienteTareaEnCola() {
+        if (servicioOcupado) return; // Bloqueo si hay una operación de chat en curso
+
+        BotTask tareaActual;
+        synchronized (colaDeTareas) {
+            if (colaDeTareas.isEmpty()) {
+                servicioOcupado = false;
+                return;
+            }
+            tareaActual = colaDeTareas.poll(); // Extrae el primer elemento de la cola
+        }
+
+        servicioOcupado = true;
+        ejecutarFlujoDeRespuesta(tareaActual);
+    }
+
+    private void ejecutarFlujoDeRespuesta(BotTask tarea) {
+        try {
+            // Paso 1: Abrir la ventana del chat de forma remota
+            tarea.intent.send();
+            
+            // Paso 2: Consultar al servidor Python en un hilo secundario
+            new Thread(() -> {
+                String respuestaIA = solicitarRespuestaServidor(tarea.mensaje);
+                
+                if (respuestaIA == null || respuestaIA.trim().isEmpty()) {
+                    // Si el servidor falla, liberamos el chat y continuamos con la cola
+                    forzarSalidaDeChat();
+                    return;
+                }
+
+                // Paso 3: Retornar al hilo principal de la interfaz para escribir (Ajustado para teléfonos lentos)
+                new Handler(Looper.getMainLooper()).postDelayed(() -> {
+                    inyectarTextoYVerificarEnvio(respuestaIA, 0);
+                }, 1500); // Tiempo prudencial para la carga inicial de la ventana de chat
+
+            }).start();
+
+        } catch (Exception e) {
+            forzarSalidaDeChat();
+        }
+    }
+
+    private void inyectarTextoYVerificarEnvio(String textoAResponder, int reintentos) {
         AccessibilityNodeInfo rootNode = getRootInActiveWindow();
-        if (rootNode == null) return;
-
-        String textoCapturado = extraerUltimoMensajeReal(rootNode); 
-
-        if (textoCapturado.isEmpty() || textoCapturado.equals(ultimoTextoRecibido)) return; 
-
-        ultimoTiempoProceso = System.currentTimeMillis();
-        ultimoTextoRecibido = textoCapturado;
-        
-        enviarARender(textoCapturado);
-    }
-
-    private String extraerUltimoMensajeReal(AccessibilityNodeInfo nodo) {
-        List<String> textosEnPantalla = new ArrayList<>();
-        recorrerNodosBuscandoTexto(nodo, textosEnPantalla);
-        if (textosEnPantalla.size() > 0) return textosEnPantalla.get(textosEnPantalla.size() - 1);
-        return "";
-    }
-
-    private void recorrerNodosBuscandoTexto(AccessibilityNodeInfo nodo, List<String> lista) {
-        if (nodo == null) return;
-        if (nodo.getClassName() != null && nodo.getClassName().toString().equals("android.widget.TextView")) {
-            if (nodo.getText() != null) {
-                String txt = nodo.getText().toString().trim();
-                if (txt.length() > 1 && !txt.equalsIgnoreCase("Type a message") && !txt.equalsIgnoreCase("Escribe un mensaje")) {
-                    lista.add(txt);
-                }
-            }
+        if (rootNode == null) {
+            reintentarOAbandonar(textoAResponder, reintentos);
+            return;
         }
-        for (int i = 0; i < nodo.getChildCount(); i++) {
-            recorrerNodosBuscandoTexto(nodo.getChild(i), lista);
-        }
-    }
-
-    private void enviarARender(String mensaje) {
-        new Thread(() -> {
-            try {
-                URL url = new URL(RENDER_URL);
-                HttpURLConnection conn = (HttpURLConnection) url.openConnection();
-                conn.setRequestMethod("POST");
-                conn.setRequestProperty("Content-Type", "application/json; utf-8");
-                conn.setDoOutput(true);
-
-                String jsonInputString = "{\"message\": \"" + mensaje.replace("\"", "\\\"") + "\", \"user_id\": \"telefono_1\"}";
-
-                try(OutputStream os = conn.getOutputStream()) {
-                    byte[] input = jsonInputString.getBytes("utf-8");
-                    os.write(input, 0, input.length);
-                }
-
-                BufferedReader br = new BufferedReader(new InputStreamReader(conn.getInputStream(), "utf-8"));
-                StringBuilder response = new StringBuilder();
-                String responseLine;
-                while ((responseLine = br.readLine()) != null) response.append(responseLine.trim());
-
-                String respuestaIA = response.toString();
-
-                new Handler(Looper.getMainLooper()).post(() -> {
-                    escribirMensajeConPortapapeles(respuestaIA);
-                });
-
-            } catch (Exception e) {
-                // Manejo silencioso de errores de red en producción
-            }
-        }).start();
-    }
-
-    private void escribirMensajeConPortapapeles(String textoResponder) {
-        AccessibilityNodeInfo rootNode = getRootInActiveWindow();
-        if (rootNode == null) return;
 
         AccessibilityNodeInfo cajaDeTexto = encontrarCajaDeTexto(rootNode);
         if (cajaDeTexto != null) {
-            
+            // Copiar el texto limpio de la IA al portapapeles del sistema
             ClipboardManager clipboard = (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
             if (clipboard != null) {
-                ClipData clip = ClipData.newPlainText("IA_Data", textoResponder);
+                ClipData clip = ClipData.newPlainText("IA_Data", textoAResponder);
                 clipboard.setPrimaryClip(clip);
 
+                // Ejecutar foco y acción nativa de pegado
                 cajaDeTexto.performAction(AccessibilityNodeInfo.ACTION_FOCUS);
                 cajaDeTexto.performAction(AccessibilityNodeInfo.ACTION_PASTE);
                 
-                try { Thread.sleep(500); } catch (Exception e) {} 
+                // Retardo de procesamiento físico de entrada de caracteres
+                try { Thread.sleep(400); } catch (Exception e) {} 
                 
                 AccessibilityNodeInfo rootActualizado = getRootInActiveWindow();
                 AccessibilityNodeInfo botonEnviar = encontrarBotonEnviar(rootActualizado);
+                
                 if (botonEnviar != null) {
                     botonEnviar.performAction(AccessibilityNodeInfo.ACTION_CLICK);
+                    
+                    // --- CONTROL DE VERIFICACIÓN SEGURO (Mata el fallo de MacroDroid) ---
+                    new Handler(Looper.getMainLooper()).postDelayed(() -> {
+                        AccessibilityNodeInfo rootVerificacion = getRootInActiveWindow();
+                        AccessibilityNodeInfo cajaVerificar = encontrarCajaDeTexto(rootVerificacion);
+                        
+                        // Si la casilla sigue conteniendo texto, el envío falló debido a lentitud del hardware
+                        if (cajaVerificar != null && cajaVerificar.getText() != null && cajaVerificar.getText().toString().length() > 0) {
+                            if (reintentos < 2) {
+                                // Forzar reintento incrementando el contador
+                                inyectarTextoYVerificarEnvio(textoAResponder, reintentos + 1);
+                            } else {
+                                forzarSalidaDeChat();
+                            }
+                        } else {
+                            // Casilla vacía = Mensaje enviado con éxito total. Procedemos a salir.
+                            forzarSalidaDeChat();
+                        }
+                    }, 800); // Ventana de tiempo para que la UI procese el envío
+                } else {
+                    reintentarOAbandonar(textoAResponder, reintentos);
                 }
             }
+        } else {
+            reintentarOAbandonar(textoAResponder, reintentos);
+        }
+    }
+
+    private void reintentarOAbandonar(String texto, int reintentos) {
+        if (reintentos < 2) {
+            new Handler(Looper.getMainLooper()).postDelayed(() -> {
+                inyectarTextoYVerificarEnvio(texto, reintentos + 1);
+            }, 1000); // Esperar un segundo extra si el teléfono está congelado
+        } else {
+            forzarSalidaDeChat();
+        }
+    }
+
+    private void forzarSalidaDeChat() {
+        // Ejecución de la acción nativa del sistema para simular clic hacia atrás
+        performGlobalAction(GLOBAL_ACTION_BACK);
+        
+        // Retardo para que la pantalla de SUGO se cierre antes de tomar el próximo elemento de la cola
+        new Handler(Looper.getMainLooper()).postDelayed(() -> {
+            servicioOcupado = false;
+            procesarSiguienteTareaEnCola();
+        }, 1200);
+    }
+
+    private String solicitarRespuestaServidor(String mensajeUsuario) {
+        try {
+            URL url = new URL(RENDER_URL);
+            HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+            conn.setRequestMethod("POST");
+            conn.setRequestProperty("Content-Type", "application/json; utf-8");
+            conn.setDoOutput(true);
+
+            String mensajeSeguro = mensajeUsuario.replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", " ");
+            String jsonInputString = "{\"message\": \"" + mensajeSeguro + "\", \"user_id\": \"telefono_1\"}";
+
+            try(OutputStream os = conn.getOutputStream()) {
+                byte[] input = jsonInputString.getBytes("utf-8");
+                os.write(input, 0, input.length);
+            }
+
+            BufferedReader br = new BufferedReader(new InputStreamReader(conn.getInputStream(), "utf-8"));
+            StringBuilder response = new StringBuilder();
+            String responseLine;
+            while ((responseLine = br.readLine()) != null) {
+                response.append(responseLine.trim());
+            }
+            return response.toString();
+        } catch (Exception e) {
+            return "";
         }
     }
 
@@ -222,6 +279,12 @@ public class SugoBotService extends AccessibilityService {
             if (resultado != null) return resultado;
         }
         return null;
+    }
+
+    private void logFlotante(String mensaje) {
+        new Handler(Looper.getMainLooper()).post(() -> 
+            Toast.makeText(getApplicationContext(), mensaje, Toast.LENGTH_SHORT).show()
+        );
     }
 
     @Override
