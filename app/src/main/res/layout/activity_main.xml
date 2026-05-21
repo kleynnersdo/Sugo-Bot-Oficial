@@ -3,47 +3,49 @@
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:orientation="vertical"
-    android:padding="16dp"
+    android:padding="24dp"
+    android:gravity="center"
     android:background="#F5F5F5">
+
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="Panel de Control - LatinBot IA"
+        android:textSize="22sp"
+        android:textStyle="bold"
+        android:layout_marginBottom="40dp"
+        android:textColor="#333333"/>
+
+    <Button
+        android:id="@+id/btn_notificaciones"
+        android:layout_width="match_parent"
+        android:layout_height="55dp"
+        android:text="1. Activar Notificaciones"
+        android:layout_marginBottom="12dp"
+        android:backgroundTint="#2196F3"/>
+
+    <Button
+        android:id="@+id/btn_accesibilidad"
+        android:layout_width="match_parent"
+        android:layout_height="55dp"
+        android:text="2. Activar Accesibilidad"
+        android:layout_marginBottom="12dp"
+        android:backgroundTint="#4CAF50"/>
+
+    <Button
+        android:id="@+id/btn_bateria"
+        android:layout_width="match_parent"
+        android:layout_height="55dp"
+        android:text="3. Optimización de Batería (No Dormir)"
+        android:layout_marginBottom="40dp"
+        android:backgroundTint="#FF9800"/>
 
     <Switch
         android:id="@+id/switch_estado_bot"
-        android:layout_width="match_parent"
+        android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:text="Estado: "
+        android:text="Estado del Bot: "
         android:textSize="18sp"
-        android:textStyle="bold"
-        android:layout_marginBottom="10dp"/>
-
-    <LinearLayout
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:orientation="horizontal"
-        android:layout_marginBottom="10dp">
-        <Button android:id="@+id/btn_permisos"
-            android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1"
-            android:text="Permisos"/>
-        <Button android:id="@+id/btn_bateria"
-            android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1"
-            android:text="No Dormir"
-            android:backgroundTint="#FF9800"/>
-    </LinearLayout>
-
-    <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
-        android:text="Radar de Notificaciones (Toque para bloquear):" android:textStyle="bold" android:layout_marginTop="10dp"/>
-    <ScrollView android:layout_width="match_parent" android:layout_height="0dp" android:layout_weight="1"
-        android:background="#FFFFFF" android:padding="8dp" android:layout_marginBottom="10dp">
-        <LinearLayout android:id="@+id/panel_radar" android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical"/>
-    </ScrollView>
-
-    <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
-        android:text="Lista Negra (Bloqueadas):" android:textStyle="bold" android:textColor="#D32F2F"/>
-    <ScrollView android:layout_width="match_parent" android:layout_height="0dp" android:layout_weight="1"
-        android:background="#FFEBEE" android:padding="8dp">
-        <LinearLayout android:id="@+id/panel_bloqueadas" android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical"/>
-    </ScrollView>
-
-    <Button android:id="@+id/btn_limpiar_radar" android:layout_width="match_parent" android:layout_height="wrap_content"
-        android:text="Refrescar Radar" android:layout_marginTop="10dp"/>
+        android:textStyle="bold"/>
 
 </LinearLayout>

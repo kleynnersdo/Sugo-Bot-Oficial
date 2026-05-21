@@ -1,8 +1,8 @@
 package com.latinbot.sugo;
 
-import android.content.SharedPreferences;
 import android.service.notification.NotificationListenerService;
 import android.service.notification.StatusBarNotification;
+import android.content.SharedPreferences;
 
 public class SugoNotificationListener extends NotificationListenerService {
 
@@ -12,27 +12,34 @@ public class SugoNotificationListener extends NotificationListenerService {
     public void onNotificationPosted(StatusBarNotification sbn) {
         if (sbn == null || sbn.getNotification() == null) return;
 
-        SharedPreferences prefsBot = getSharedPreferences("LatinBotPrefs", MODE_PRIVATE);
-        if (!prefsBot.getBoolean("bot_activo", false)) return; // Apagado general
-
-        if (!SUGO_PACKAGE.equals(sbn.getPackageName())) return;
-
-        // Extraer el texto de la notificación para el Radar
-        CharSequence ticker = sbn.getNotification().tickerText;
-        String textoNotif = (ticker != null) ? ticker.toString() : "Notificación sin texto";
-
-        // 1. Verificar Lista Negra (Si está bloqueada, ABORTAR)
-        SharedPreferences prefsBloqueadas = getSharedPreferences("LatinBotBlacklist", MODE_PRIVATE);
-        if (prefsBloqueadas.contains(textoNotif)) {
-            return; // Filtro de aduana: No pasa al bot
+        SharedPreferences prefs = getSharedPreferences("LatinBotPrefs", MODE_PRIVATE);
+        if (!prefs.getBoolean("bot_activo", false)) {
+            return; // Si está apagado, no hace nada
         }
 
-        // 2. Acumular en el Radar
-        SharedPreferences prefsRadar = getSharedPreferences("LatinBotRadar", MODE_PRIVATE);
-        int conteoActual = prefsRadar.getInt(textoNotif, 0);
-        prefsRadar.edit().putInt(textoNotif, conteoActual + 1).apply();
+        if (!SUGO_PACKAGE.equals(sbn.getPackageName())) {
+            return; // Solo lee la app objetivo
+        }
 
-        // 3. Si pasó todos los filtros, enviarla al bot original
+        // --- AQUÍ SE AGREGAN LAS PALABRAS PROHIBIDAS MANUALMENTE ---
+        CharSequence ticker = sbn.getNotification().tickerText;
+        if (ticker != null) {
+            // Convierte todo a minúsculas para que la búsqueda sea exacta
+            String textoNotificacion = ticker.toString().toLowerCase();
+            
+            // TODAS las palabras de abajo deben ir en minúsculas obligatoriamente
+            if (textoNotificacion.contains("flecha de cupido") || 
+                textoNotificacion.contains("sugo team") ||
+                textoNotificacion.contains("asist. anfitrion") ||
+                textoNotificacion.contains("asist. juego") ||
+                textoNotificacion.contains("sistema") ||
+                textoNotificacion.contains("eventos") || 
+                textoNotificacion.contains("te he seguido")) { 
+                return; // Bloqueo inmediato: no pasa al bot
+            }
+        }
+
+        // Envía directo al procesador original sin intermediarios
         SugoBotService.procesarNotificacionDesdeListener(sbn.getNotification());
     }
 

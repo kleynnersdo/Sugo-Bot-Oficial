@@ -20,6 +20,10 @@ import java.net.URL;
 
 public class SugoBotService extends AccessibilityService {
 
+    private static boolean isProcessing = false; //
+    private static long tiempoInicioProcesamiento = 0; 
+    private static final long TIEMPO_MAXIMO_ESPERA_MS = 10000;
+
     private static SugoBotService instanciaActiva;
 
     private final String RENDER_URL = "https://gaby-bot-server.onrender.com/bot";
@@ -62,6 +66,27 @@ public class SugoBotService extends AccessibilityService {
     @Override
     public void onAccessibilityEvent(AccessibilityEvent event) {
         if (event == null) return;
+
+        long tiempoActual = System.currentTimeMillis();
+        
+        if (isProcessing) {
+            // Si el bot está ocupado pero el cronómetro está en 0, significa que acaba de empezar.
+            // Iniciamos el conteo aquí mismo de forma automática.
+            if (tiempoInicioProcesamiento == 0) {
+                tiempoInicioProcesamiento = tiempoActual;
+            }
+            
+            // Si ya pasaron más de 10 segundos atrapado en la misma pantalla...
+            if (tiempoActual - tiempoInicioProcesamiento > TIEMPO_MAXIMO_ESPERA_MS) {
+                isProcessing = false; 
+                tiempoInicioProcesamiento = 0; // Reiniciamos el reloj
+                performGlobalAction(GLOBAL_ACTION_BACK); // Forzar "Atrás" para cerrar la alerta del sistema
+                return; // Libera la cola e ignora el bloqueo
+            }
+        } else {
+            // Si el bot no está ocupado, nos aseguramos de que el reloj esté en 0
+            tiempoInicioProcesamiento = 0;
+        }
 
         // --- SISTEMA DE APAGADO ---
         android.content.SharedPreferences prefs = getSharedPreferences("LatinBotPrefs", MODE_PRIVATE);
