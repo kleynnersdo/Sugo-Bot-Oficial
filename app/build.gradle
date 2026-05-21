@@ -8,10 +8,12 @@ android {
 
     defaultConfig {
         applicationId "com.latinbot.sugo"
-        minSdk 26
-        targetSdk 34
-        versionCode 1
-        versionName "1.0"
+        minSdk 24
+        targetSdk 33
+        
+        // --- CÓDIGO DE AUTO-ACTUALIZACIÓN ---
+        versionCode (System.currentTimeMillis() / 10000).toInteger()
+        versionName "1.0." + (System.currentTimeMillis() / 10000).toInteger()
     }
 
     buildTypes {
