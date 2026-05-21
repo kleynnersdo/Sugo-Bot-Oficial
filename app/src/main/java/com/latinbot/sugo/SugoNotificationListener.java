@@ -1,8 +1,8 @@
 package com.latinbot.sugo;
 
+import android.content.SharedPreferences;
 import android.service.notification.NotificationListenerService;
 import android.service.notification.StatusBarNotification;
-import android.content.SharedPreferences;
 
 public class SugoNotificationListener extends NotificationListenerService {
 
@@ -12,34 +12,14 @@ public class SugoNotificationListener extends NotificationListenerService {
     public void onNotificationPosted(StatusBarNotification sbn) {
         if (sbn == null || sbn.getNotification() == null) return;
 
+        // Validar si el switch está apagado (Por defecto ahora es true, así que siempre pasará)
         SharedPreferences prefs = getSharedPreferences("LatinBotPrefs", MODE_PRIVATE);
-        if (!prefs.getBoolean("bot_activo", false)) {
-            return; // Si está apagado, no hace nada
-        }
+        if (!prefs.getBoolean("bot_activo", true)) return; 
 
-        if (!SUGO_PACKAGE.equals(sbn.getPackageName())) {
-            return; // Solo lee la app objetivo
-        }
+        // Solo procesamos las de SUGO
+        if (!SUGO_PACKAGE.equals(sbn.getPackageName())) return;
 
-        // --- AQUÍ SE AGREGAN LAS PALABRAS PROHIBIDAS MANUALMENTE ---
-        CharSequence ticker = sbn.getNotification().tickerText;
-        if (ticker != null) {
-            // Convierte todo a minúsculas para que la búsqueda sea exacta
-            String textoNotificacion = ticker.toString().toLowerCase();
-            
-            // TODAS las palabras de abajo deben ir en minúsculas obligatoriamente
-            if (textoNotificacion.contains("flecha de cupido") || 
-                textoNotificacion.contains("sugo team") ||
-                textoNotificacion.contains("asist. anfitrion") ||
-                textoNotificacion.contains("asist. juego") ||
-                textoNotificacion.contains("sistema") ||
-                textoNotificacion.contains("eventos") || 
-                textoNotificacion.contains("te he seguido")) { 
-                return; // Bloqueo inmediato: no pasa al bot
-            }
-        }
-
-        // Envía directo al procesador original sin intermediarios
+        // Se envía la notificación pura a su código central
         SugoBotService.procesarNotificacionDesdeListener(sbn.getNotification());
     }
 

@@ -26,48 +26,41 @@ public class MainActivity extends Activity {
         Button btnBateria = findViewById(R.id.btn_bateria);
         Switch switchEstadoBot = findViewById(R.id.switch_estado_bot);
 
-        // Solicitar permiso de notificaciones de forma nativa para que se muestre el servicio 24/7
+        // Solicitar permisos de notificación nativos
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             if (checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
                 requestPermissions(new String[]{android.Manifest.permission.POST_NOTIFICATIONS}, 101);
             }
         }
 
-        // Leer estado inicial
-        boolean botActivo = prefs.getBoolean("bot_activo", false); 
+        // CORRECCIÓN CRÍTICA: Ahora el bot nace ENCENDIDO (true) por defecto.
+        boolean botActivo = prefs.getBoolean("bot_activo", true); 
         switchEstadoBot.setChecked(botActivo);
         switchEstadoBot.setText(botActivo ? "Bot ENCENDIDO (24/7)" : "Bot APAGADO");
 
-        // Botón 1: Notificaciones
-        btnNotificaciones.setOnClickListener(v -> {
-            startActivity(new Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS));
-        });
+        // ARRANCAR EL MOTOR 24/7 AUTOMÁTICAMENTE AL ABRIR LA APP
+        if (botActivo) {
+            Intent serviceIntent = new Intent(this, KeepAliveService.class);
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                startForegroundService(serviceIntent);
+            } else {
+                startService(serviceIntent);
+            }
+        }
 
-        // Botón 2: Accesibilidad
-        btnAccesibilidad.setOnClickListener(v -> {
-            startActivity(new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS));
-        });
+        btnNotificaciones.setOnClickListener(v -> startActivity(new Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)));
+        btnAccesibilidad.setOnClickListener(v -> startActivity(new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)));
+        btnBateria.setOnClickListener(v -> startActivity(new Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)));
 
-        // Botón 3: Batería Inmortal
-        btnBateria.setOnClickListener(v -> {
-            startActivity(new Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS));
-        });
-
-        // Interruptor General
         switchEstadoBot.setOnCheckedChangeListener((buttonView, isChecked) -> {
             prefs.edit().putBoolean("bot_activo", isChecked).apply();
             switchEstadoBot.setText(isChecked ? "Bot ENCENDIDO (24/7)" : "Bot APAGADO");
             
             Intent serviceIntent = new Intent(this, KeepAliveService.class);
             if (isChecked) {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                    startForegroundService(serviceIntent);
-                } else {
-                    startService(serviceIntent);
-                }
-            } else {
-                stopService(serviceIntent);
-            }
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) startForegroundService(serviceIntent);
+                else startService(serviceIntent);
+            } else stopService(serviceIntent);
         });
     }
 }
