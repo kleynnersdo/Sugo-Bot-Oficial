@@ -11,9 +11,10 @@ android {
         minSdk 24
         targetSdk 33
         
-        // --- CÓDIGO DE AUTO-ACTUALIZACIÓN ---
-        versionCode (System.currentTimeMillis() / 10000).toInteger()
-        versionName "1.0." + (System.currentTimeMillis() / 10000).toInteger()
+        // --- CÓDIGO DE AUTO-ACTUALIZACIÓN CORREGIDO ---
+        def timeVersion = (int) (System.currentTimeMillis() / 10000)
+        versionCode timeVersion
+        versionName "1.0." + timeVersion
     }
 
     buildTypes {
