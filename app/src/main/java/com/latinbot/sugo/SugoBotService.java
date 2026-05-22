@@ -22,7 +22,7 @@ public class SugoBotService extends AccessibilityService {
 
     private static SugoBotService instanciaActiva;
     
-    // VARIABLES DEL ESCUDO SALVAVIDAS (Corregidas y unificadas)
+    // ESCUDO SALVAVIDAS
     private static long tiempoInicioProcesamiento = 0; 
     private static final long TIEMPO_MAXIMO_ESPERA_MS = 10000;
 
@@ -33,7 +33,6 @@ public class SugoBotService extends AccessibilityService {
     private final String ID_BOTON_ENVIAR = "com.voicemaker.android:id/id_chat_send_btn";
     private final String ID_PERFIL_AVATAR = "com.voicemaker.android:id/id_chatting_title_avatar_iv";
 
-    // LISTA DE PALABRAS PROHIBIDAS (Todas en minúsculas para que el filtro no falle)
     private final List<String> CADENAS_BLOQUEADAS = Arrays.asList(
         "sugo team", "asist. anfitrion", "sala chat", "te he seguido", 
         "aviso de interaccion", "ha reaccionado a", "le ha gustado tu mensaje", "le gusta tu mensaje",
@@ -50,9 +49,12 @@ public class SugoBotService extends AccessibilityService {
     }
 
     private final Queue<BotTask> colaDeTareas = new LinkedList<>();
-    private boolean servicioOcupado = false; // ESTA ES LA VARIABLE QUE RIGE TODO
-    private String ultimoMensajeProcesado = "";
-    private long tiempoUltimoMensaje = 0;
+    private boolean servicioOcupado = false; 
+    
+    // NUEVAS VARIABLES PARA LA COLA DE ALTA CAPACIDAD
+    private String ultimaFirmaProcesada = "";
+    private long tiempoUltimaFirma = 0;
+    
     private boolean esperandoCajaTexto = false;
     private String respuestaParaInyectar = "";
 
@@ -66,31 +68,26 @@ public class SugoBotService extends AccessibilityService {
     public void onAccessibilityEvent(AccessibilityEvent event) {
         if (event == null) return;
 
-        // ====================================================================
-        // ESCUDO SALVAVIDAS 100% FUNCIONAL
-        // ====================================================================
+        // --- ESCUDO SALVAVIDAS INTACTO (Si se pega 10 seg, se auto-libera) ---
         long tiempoActual = System.currentTimeMillis();
         
         if (servicioOcupado) {
             if (tiempoInicioProcesamiento == 0) tiempoInicioProcesamiento = tiempoActual;
             
-            // Si pasaron más de 10 segundos atascado...
             if (tiempoActual - tiempoInicioProcesamiento > TIEMPO_MAXIMO_ESPERA_MS) {
                 servicioOcupado = false; 
                 esperandoCajaTexto = false;
                 respuestaParaInyectar = "";
                 tiempoInicioProcesamiento = 0; 
                 
-                performGlobalAction(GLOBAL_ACTION_BACK); // Cierra la alerta atascada
-                
-                // Da un segundo de respiro y avanza al siguiente mensaje en cola
+                performGlobalAction(GLOBAL_ACTION_BACK); 
                 new Handler(Looper.getMainLooper()).postDelayed(this::procesarSiguienteTareaEnCola, 1200);
                 return; 
             }
         } else {
             tiempoInicioProcesamiento = 0;
         }
-        // ====================================================================
+        // ----------------------------------------------------------------------
 
         android.content.SharedPreferences prefs = getSharedPreferences("LatinBotPrefs", MODE_PRIVATE);
         if (!prefs.getBoolean("bot_activo", true)) return;
@@ -116,31 +113,39 @@ public class SugoBotService extends AccessibilityService {
         if (notification == null) return;
         
         String textoNotificacion = "";
+        String tituloEmisor = "";
+
+        // 1. EXTRAER TEXTO Y NOMBRE DEL EMISOR
         if (notification.extras != null) {
             CharSequence text = notification.extras.getCharSequence(Notification.EXTRA_TEXT);
             if (text != null) textoNotificacion = text.toString();
+            
+            CharSequence title = notification.extras.getCharSequence(Notification.EXTRA_TITLE);
+            if (title != null) tituloEmisor = title.toString();
         } else if (notification.tickerText != null) {
             textoNotificacion = notification.tickerText.toString();
         }
 
         if (textoNotificacion.trim().isEmpty()) return;
 
+        // 2. REVISAR PALABRAS PROHIBIDAS
         String textoLower = textoNotificacion.toLowerCase();
         for (String frase : CADENAS_BLOQUEADAS) {
-            if (textoLower.contains(frase)) return; // BLOQUEO EXACTO DE PALABRAS PROHIBIDAS
+            if (textoLower.contains(frase)) return; 
         }
 
-        if (textoNotificacion.equals(ultimoMensajeProcesado) && (System.currentTimeMillis() - tiempoUltimoMensaje < 4000)) return; 
+        // 3. CREAR FIRMA ÚNICA (Emisor + Mensaje)
+        String firmaUnica = tituloEmisor + "|" + textoNotificacion;
 
-        synchronized (colaDeTareas) {
-            for (BotTask tarea : colaDeTareas) {
-                if (tarea.mensaje.equals(textoNotificacion)) return;
-            }
+        // 4. ANTI-REBOTE (Evita que el sistema lea la misma notificación exacta 2 veces en menos de 1 segundo)
+        if (firmaUnica.equals(ultimaFirmaProcesada) && (System.currentTimeMillis() - tiempoUltimaFirma < 1000)) {
+            return; 
         }
 
-        ultimoMensajeProcesado = textoNotificacion;
-        tiempoUltimoMensaje = System.currentTimeMillis();
+        ultimaFirmaProcesada = firmaUnica;
+        tiempoUltimaFirma = System.currentTimeMillis();
 
+        // 5. ENCOLADO DIRECTO (Sin borrar duplicados de distintas personas)
         if (notification.contentIntent != null) {
             synchronized (colaDeTareas) {
                 colaDeTareas.add(new BotTask(notification.contentIntent, textoNotificacion));
@@ -163,7 +168,7 @@ public class SugoBotService extends AccessibilityService {
 
         servicioOcupado = true;
         esperandoCajaTexto = true;
-        tiempoInicioProcesamiento = System.currentTimeMillis(); // INICIA EL RELOJ DEL ESCUDO
+        tiempoInicioProcesamiento = System.currentTimeMillis(); 
         respuestaParaInyectar = ""; 
 
         ejecutarFlujoDeRespuesta(tareaActual);
@@ -220,7 +225,7 @@ public class SugoBotService extends AccessibilityService {
     private void forzarSalidaDeChat() {
         esperandoCajaTexto = false;
         respuestaParaInyectar = "";
-        tiempoInicioProcesamiento = 0; // APAGA EL RELOJ DEL ESCUDO AL SALIR
+        tiempoInicioProcesamiento = 0; 
 
         AccessibilityNodeInfo rootNode = getRootInActiveWindow();
         AccessibilityNodeInfo botonSalirPerfil = encontrarNodoPorId(rootNode, ID_PERFIL_AVATAR);
